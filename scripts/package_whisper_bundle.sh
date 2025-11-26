@@ -27,6 +27,18 @@ cp "$MODEL_SRC" "$DEST/models/"
 cp "$ROOT_DIR/LICENSE" "$DEST/"
 cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$DEST/"
 
+CLI_SHA=$(shasum -a 256 "$DEST/bin/whisper-cli" | awk '{print $1}')
+MODEL_SHA=$(shasum -a 256 "$DEST/models/ggml-base.bin" | awk '{print $1}')
+
+cat >"$DEST/manifest.json" <<EOF
+{
+  "files": {
+    "bin/whisper-cli": "$CLI_SHA",
+    "models/ggml-base.bin": "$MODEL_SHA"
+  }
+}
+EOF
+
 cat >"$DEST/README.txt" <<'EOF'
 whisper-bundle
 ===============

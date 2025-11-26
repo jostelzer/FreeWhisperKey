@@ -280,16 +280,72 @@ public enum WhisperBundleResolver {
         let modelsDirectory = bundleURL.appendingPathComponent("models")
         let defaultModel = modelsDirectory.appendingPathComponent("ggml-base.bin")
 
-        guard FileManager.default.fileExists(atPath: bundleURL.path) else {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: bundleURL.path) else {
             throw TranscriptionError.bundleMissing("dist/whisper-bundle not found. Run scripts/package_whisper_bundle.sh first.")
         }
-        guard FileManager.default.isExecutableFile(atPath: binary.path) else {
+        guard fileManager.isExecutableFile(atPath: binary.path) else {
             throw TranscriptionError.bundleMissing("whisper-cli binary missing or not executable at \(binary.path)")
         }
-        guard FileManager.default.fileExists(atPath: defaultModel.path) else {
+        guard fileManager.fileExists(atPath: defaultModel.path) else {
             throw TranscriptionError.bundleMissing("Model file missing at \(defaultModel.path)")
         }
 
+        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+        guard fileManager.fileExists(atPath: manifestURL.path) else {
+            throw TranscriptionError.bundleMissing("manifest.json missing in bundle. Re-run scripts/package_whisper_bundle.sh.")
+        }
+
+        let manifest = try BundleManifest.load(from: manifestURL)
+        try verifyBundleIntegrity(bundleURL: bundleURL, binary: binary, defaultModel: defaultModel, manifest: manifest)
+
         return WhisperBundle(root: bundleURL, binary: binary, modelsDirectory: modelsDirectory, defaultModel: defaultModel)
+    }
+
+    private static func verifyBundleIntegrity(bundleURL: URL, binary: URL, defaultModel: URL, manifest: BundleManifest) throws {
+        guard let binaryHash = manifest.sha256(for: "bin/whisper-cli") else {
+            throw TranscriptionError.bundleMissing("Manifest missing checksum for bin/whisper-cli.")
+        }
+
+        guard let modelRelativePath = relativePath(of: defaultModel, relativeTo: bundleURL) else {
+            throw TranscriptionError.bundleMissing("Failed to determine model path relative to bundle.")
+        }
+
+        guard let modelHash = manifest.sha256(for: modelRelativePath) else {
+            throw TranscriptionError.bundleMissing("Manifest missing checksum for \(modelRelativePath).")
+        }
+
+        try BundleIntegrity.validate(BundleIntegrity.Expectation(path: "bin/whisper-cli", sha256: binaryHash), root: bundleURL)
+        try BundleIntegrity.validate(BundleIntegrity.Expectation(path: modelRelativePath, sha256: modelHash), root: bundleURL)
+    }
+
+    private static func relativePath(of url: URL, relativeTo root: URL) -> String? {
+        let normalizedRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
+        let normalizedTarget = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard normalizedTarget.hasPrefix(normalizedRoot) else {
+            return nil
+        }
+        var relative = String(normalizedTarget.dropFirst(normalizedRoot.count))
+        if relative.hasPrefix("/") {
+            relative.removeFirst()
+        }
+        return relative.isEmpty ? nil : relative
+    }
+}
+
+private struct BundleManifest: Decodable {
+    let files: [String: String]
+
+    static func load(from url: URL) throws -> BundleManifest {
+        let data = try Data(contentsOf: url)
+        do {
+            return try JSONDecoder().decode(BundleManifest.self, from: data)
+        } catch {
+            throw TranscriptionError.bundleMissing("Failed to decode manifest.json: \(error.localizedDescription)")
+        }
+    }
+
+    func sha256(for relativePath: String) -> String? {
+        files[relativePath]
     }
 }

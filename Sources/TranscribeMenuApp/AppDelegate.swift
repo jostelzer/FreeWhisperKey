@@ -1,6 +1,5 @@
 import AppKit
 @preconcurrency import ApplicationServices
-import CryptoKit
 import Foundation
 import TranscriptionCore
 
@@ -244,32 +243,6 @@ final class PreferencesWindowController: NSWindowController {
         }
     }
 
-    private func verifyDownload(at url: URL, for model: KnownModel) throws {
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        if let expected = model.expectedBytes,
-           let sizeNumber = attributes[.size] as? NSNumber {
-            let actual = sizeNumber.int64Value
-            guard actual == expected else {
-                throw ModelVerificationError.sizeMismatch(expected: expected, actual: actual)
-            }
-        }
-
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-
-        var hasher = SHA256()
-        while true {
-            let chunk = try handle.read(upToCount: 256 * 1024)
-            guard let chunk, !chunk.isEmpty else { break }
-            hasher.update(data: chunk)
-        }
-
-        let digest = hasher.finalize().map { String(format: "%02hhx", $0) }.joined()
-        guard digest == model.checksum else {
-            throw ModelVerificationError.checksumMismatch(expected: model.checksum, actual: digest)
-        }
-    }
-
     private func startDownload(for known: KnownModel, successSelection: ModelOption) {
         guard !isDownloading else { return }
         downloadState = .inProgress(message: "Downloading \(known.displayName)…", progress: nil)
@@ -311,7 +284,7 @@ final class PreferencesWindowController: NSWindowController {
                         try fm.removeItem(at: tempURL)
                     }
                     try fm.moveItem(at: tempLocation, to: tempURL)
-                    try self.verifyDownload(at: tempURL, for: known)
+                    try ModelVerifier.verify(downloadedFile: tempURL, for: known, fileManager: fm)
                     if fm.fileExists(atPath: destination.path) {
                         try fm.removeItem(at: destination)
                     }
