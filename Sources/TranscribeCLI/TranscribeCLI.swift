@@ -6,16 +6,16 @@ struct TranscribeCLI {
     static func main() {
         do {
             let recorder = MicRecorder()
-            let audioURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mic-\(UUID().uuidString).wav")
+            let recording = try TemporaryRecording(prefix: "mic")
+            defer { recording.cleanup() }
             print("Recording 5 seconds of audio... (grant microphone access if prompted)")
-            try recorder.record(into: audioURL, duration: 5)
-            print("Recording saved to \(audioURL.path)")
+            try recorder.record(into: recording.url, duration: 5)
+            print("Recording saved to \(recording.url.path)")
 
             let bundle = try WhisperBundleResolver.resolve()
             let bridge = WhisperBridge(executableURL: bundle.binary, modelURL: bundle.defaultModel)
             print("Running whisper-cli...")
-            let transcript = try bridge.transcribe(audioURL: audioURL)
+            let transcript = try bridge.transcribe(audioURL: recording.url)
             let delivery = TranscriptDelivery()
             let config = TranscriptDeliveryConfiguration(
                 autoPasteEnabled: false,

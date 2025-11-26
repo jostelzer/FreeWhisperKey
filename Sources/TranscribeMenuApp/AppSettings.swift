@@ -5,7 +5,6 @@ final class AppSettings {
     private enum Keys: String {
         case autoPasteEnabled
         case selectedModelFilename
-        case customModelPath
         case prependSpaceBeforePaste
         case insertNewlineOnBreak
     }
@@ -28,17 +27,6 @@ final class AppSettings {
     var selectedModelFilename: String? {
         get { defaults.string(forKey: Keys.selectedModelFilename.rawValue) }
         set { defaults.set(newValue, forKey: Keys.selectedModelFilename.rawValue) }
-    }
-
-    var customModelPath: String? {
-        get { defaults.string(forKey: Keys.customModelPath.rawValue) }
-        set {
-            if let newValue = newValue, !newValue.isEmpty {
-                defaults.set(newValue, forKey: Keys.customModelPath.rawValue)
-            } else {
-                defaults.removeObject(forKey: Keys.customModelPath.rawValue)
-            }
-        }
     }
 
     var prependSpaceBeforePaste: Bool {

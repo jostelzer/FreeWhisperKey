@@ -1,38 +1,8 @@
 import AppKit
 @preconcurrency import ApplicationServices
+import CryptoKit
 import Foundation
 import TranscriptionCore
-import UniformTypeIdentifiers
-
-final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    var progressHandler: ((Double) -> Void)?
-    var completionHandler: ((Result<URL, Error>) -> Void)?
-    var expectedBytes: Int64?
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        let denominator: Double
-        if totalBytesExpectedToWrite > 0 {
-            denominator = Double(totalBytesExpectedToWrite)
-        } else if let expectedBytes {
-            denominator = Double(expectedBytes)
-        } else {
-            progressHandler?(0)
-            return
-        }
-        let fraction = max(0, min(1, Double(totalBytesWritten) / denominator))
-        progressHandler?(fraction)
-    }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        completionHandler?(.success(location))
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error {
-            completionHandler?(.failure(error))
-        }
-    }
-}
 
 @MainActor
 final class PreferencesWindowController: NSWindowController {
@@ -127,13 +97,7 @@ final class PreferencesWindowController: NSWindowController {
         let behaviorDescription = PreferencesWindowController.makeSubtext("When automatic pasting is off, FreeWhisperKey copies the transcript to the clipboard instead.")
 
         let modelHeader = PreferencesWindowController.makeHeader("Model")
-        let modelDescription = PreferencesWindowController.makeSubtext("Select a bundled ggml model or provide your own file.")
-
-        let chooseButton = NSButton(title: "Use Custom Model…", target: self, action: #selector(chooseModel))
-        let clearButton = NSButton(title: "Clear Custom Model", target: self, action: #selector(resetModel))
-
-        let customButtons = NSStackView(views: [chooseButton, clearButton])
-        customButtons.spacing = 8
+        let modelDescription = PreferencesWindowController.makeSubtext("Select a bundled ggml model. Missing models can be downloaded automatically.")
 
         let downloadButtonRow = NSStackView(views: [downloadButton, downloadProgress])
         downloadButtonRow.spacing = 8
@@ -146,8 +110,7 @@ final class PreferencesWindowController: NSWindowController {
             modelPopup,
             modelDescription,
             modelPathField,
-            downloadStack,
-            customButtons
+            downloadStack
         ])
         modelStack.orientation = .vertical
         modelStack.spacing = 8
@@ -258,11 +221,10 @@ final class PreferencesWindowController: NSWindowController {
     }
 
     private func updateModelSelectionUI() {
-        defer { updateDownloadButtonState() }
-
         guard let snapshot = selectionSnapshot else {
             modelPopup.selectItem(at: -1)
             modelPathField.stringValue = "Add ggml models to dist/whisper-bundle/models."
+            updateDownloadButtonState()
             return
         }
 
@@ -276,6 +238,7 @@ final class PreferencesWindowController: NSWindowController {
         }
 
         modelPathField.stringValue = snapshot.pathDescription
+        updateDownloadButtonState()
     }
 
     private func updateDownloadButtonState() {
@@ -289,44 +252,46 @@ final class PreferencesWindowController: NSWindowController {
     @objc private func modelSelectionChanged() {
         guard let option = currentModelOption() else { return }
         switch option.kind {
-        case .custom:
-            break
         case let .known(known) where option.needsDownload:
             startDownload(for: known, successSelection: option)
             return
         default:
             modelSelectionStore.applySelection(option)
-            onChange()
-        }
-        refreshModelOptions()
-    }
-
-    @objc private func chooseModel() {
-        let panel = NSOpenPanel()
-        if let binType = UTType(filenameExtension: "bin") {
-            panel.allowedContentTypes = [binType]
-        }
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.title = "Select Whisper Model (.bin)"
-        if panel.runModal() == .OK, let url = panel.url {
-            modelSelectionStore.useCustomModel(at: url.path)
             refreshModelOptions()
             onChange()
         }
-    }
-
-    @objc private func resetModel() {
-        modelSelectionStore.resetCustomModelIfNeeded(defaultModelName: bundle.defaultModel.lastPathComponent)
-        refreshModelOptions()
-        onChange()
     }
 
     @objc private func downloadSelectedModel() {
         guard let option = currentModelOption(),
               case let .known(known) = option.kind else { return }
         startDownload(for: known, successSelection: option)
+    }
+
+    private func verifyDownload(at url: URL, for model: KnownModel) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        if let expected = model.expectedBytes,
+           let sizeNumber = attributes[.size] as? NSNumber {
+            let actual = sizeNumber.int64Value
+            guard actual == expected else {
+                throw ModelVerificationError.sizeMismatch(expected: expected, actual: actual)
+            }
+        }
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        while true {
+            let chunk = try handle.read(upToCount: 256 * 1024)
+            guard let chunk, !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
+
+        let digest = hasher.finalize().map { String(format: "%02hhx", $0) }.joined()
+        guard digest == model.checksum else {
+            throw ModelVerificationError.checksumMismatch(expected: model.checksum, actual: digest)
+        }
     }
 
     private func startDownload(for known: KnownModel, successSelection: ModelOption) {
@@ -365,15 +330,16 @@ final class PreferencesWindowController: NSWindowController {
             case .success(let tempLocation):
                 do {
                     let fm = FileManager.default
+                    defer { try? fm.removeItem(at: tempURL) }
                     if fm.fileExists(atPath: tempURL.path) {
                         try fm.removeItem(at: tempURL)
                     }
                     try fm.moveItem(at: tempLocation, to: tempURL)
+                    try self.verifyDownload(at: tempURL, for: known)
                     if fm.fileExists(atPath: destination.path) {
                         try fm.removeItem(at: destination)
                     }
                     try fm.copyItem(at: tempURL, to: destination)
-                    try fm.removeItem(at: tempURL)
                 } catch {
                     fail(error.localizedDescription)
                     return
@@ -478,6 +444,7 @@ enum PasteError: LocalizedError {
     }
 }
 
+@MainActor
 final class PasteController {
     private let keyCodeV: CGKeyCode = 9
 
@@ -487,19 +454,15 @@ final class PasteController {
         }
 
         let pasteboard = NSPasteboard.general
-        let previousString = pasteboard.string(forType: .string)
+        let previousItems = snapshotPasteboardItems(pasteboard.pasteboardItems)
+        let previousString = previousItems.isEmpty ? pasteboard.string(forType: .string) : nil
 
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
         try sendPasteKeyStroke()
 
-        if let previous = previousString {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                pasteboard.clearContents()
-                pasteboard.setString(previous, forType: .string)
-            }
-        }
+        restoreClipboard(previousItems: previousItems, fallbackString: previousString, on: pasteboard)
     }
 
     private func sendPasteKeyStroke() throws {
@@ -516,6 +479,33 @@ final class PasteController {
 
         keyUp.flags = .maskCommand
         keyUp.post(tap: .cghidEventTap)
+    }
+
+    @MainActor
+    private func restoreClipboard(previousItems: [NSPasteboardItem], fallbackString: String?, on pasteboard: NSPasteboard) {
+        guard !previousItems.isEmpty || fallbackString != nil else { return }
+        let delay = DispatchTime.now() + .milliseconds(30)
+        DispatchQueue.main.asyncAfter(deadline: delay) {
+            pasteboard.clearContents()
+            if !previousItems.isEmpty {
+                pasteboard.writeObjects(previousItems)
+            } else if let fallbackString {
+                pasteboard.setString(fallbackString, forType: .string)
+            }
+        }
+    }
+
+    private func snapshotPasteboardItems(_ items: [NSPasteboardItem]?) -> [NSPasteboardItem] {
+        guard let items, !items.isEmpty else { return [] }
+        return items.map { original in
+            let clone = NSPasteboardItem()
+            for type in original.types {
+                if let data = original.data(forType: type) {
+                    clone.setData(data, forType: type)
+                }
+            }
+            return clone
+        }
     }
 }
 
@@ -906,7 +896,7 @@ final class StatusIconView: NSView {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum CaptureState {
         case idle
-        case recording(url: URL)
+        case recording(TemporaryRecording)
         case processing
     }
 
@@ -1061,13 +1051,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let audioURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ptt-\(UUID().uuidString).wav")
+        let recording: TemporaryRecording
         do {
-            try recorder.beginRecording(into: audioURL)
-            state = .recording(url: audioURL)
+            recording = try TemporaryRecording(prefix: "ptt")
+        } catch {
+            presentAlert(message: "Recording Error", informativeText: "Unable to create a secure temporary file: \(error.localizedDescription)")
+            return
+        }
+
+        do {
+            try recorder.beginRecording(into: recording.url)
+            state = .recording(recording)
             statusIconView.state = .recording
         } catch {
+            recording.cleanup()
             state = .idle
             statusIconView.state = .idle
             presentAlert(message: "Recording Error", informativeText: error.localizedDescription)
@@ -1075,23 +1072,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func finishPressToTalk() {
-        guard case .recording(let url) = state else { return }
+        guard case .recording(let recording) = state else { return }
         recorder.stopRecording()
         state = .processing
         statusIconView.state = .processing
-        transcribeFile(at: url)
+        transcribeRecording(recording)
     }
 
-    private func transcribeFile(at url: URL) {
+    private func transcribeRecording(_ recording: TemporaryRecording) {
         guard let bridge = whisperBridge else {
+            recording.cleanup()
             presentAlert(message: "Bundle missing", informativeText: "Rebuild whisper bundle.")
             resetState()
             return
         }
 
-        workQueue.async {
+        let activeBridge = bridge
+        workQueue.async { [weak self] in
+            defer { recording.cleanup() }
+            guard let self else { return }
             do {
-                let text = try bridge.transcribe(audioURL: url)
+                let text = try activeBridge.transcribe(audioURL: recording.url)
                 DispatchQueue.main.async {
                     self.presentTranscript(text)
                 }
@@ -1155,4 +1156,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         copyLastTranscriptItem?.isEnabled = (transcriptDelivery.lastTranscript != nil)
     }
 }
+enum ModelVerificationError: LocalizedError {
+    case checksumMismatch(expected: String, actual: String)
+    case sizeMismatch(expected: Int64, actual: Int64)
 
+    var errorDescription: String? {
+        switch self {
+        case let .checksumMismatch(expected, actual):
+            return "Checksum mismatch. Expected \(expected), got \(actual)."
+        case let .sizeMismatch(expected, actual):
+            return "Model size mismatch. Expected \(expected) bytes, got \(actual) bytes."
+        }
+    }
+}
+
+final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    var progressHandler: ((Double) -> Void)?
+    var completionHandler: ((Result<URL, Error>) -> Void)?
+    var expectedBytes: Int64?
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        let denominator: Double
+        if totalBytesExpectedToWrite > 0 {
+            denominator = Double(totalBytesExpectedToWrite)
+        } else if let expectedBytes {
+            denominator = Double(expectedBytes)
+        } else {
+            progressHandler?(0)
+            return
+        }
+        let fraction = max(0, min(1, Double(totalBytesWritten) / denominator))
+        progressHandler?(fraction)
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        completionHandler?(.success(location))
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error {
+            completionHandler?(.failure(error))
+        }
+    }
+}

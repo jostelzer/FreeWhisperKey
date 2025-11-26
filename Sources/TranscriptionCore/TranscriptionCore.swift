@@ -154,8 +154,12 @@ public struct WhisperBridge: Sendable {
     }
 
     public func transcribe(audioURL: URL) throws -> String {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("whisper-\(UUID().uuidString)")
+        let fileManager = FileManager.default
+        let scratchDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("whisper-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: scratchDirectory, withIntermediateDirectories: true)
+        let tempBase = scratchDirectory.appendingPathComponent("transcript")
+        defer { try? fileManager.removeItem(at: scratchDirectory) }
 
         let process = Process()
         process.executableURL = executableURL

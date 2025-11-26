@@ -38,18 +38,53 @@ enum KnownModel: String, CaseIterable {
 
     var expectedBytes: Int64? {
         switch self {
-        case .tiny, .tinyEn:
-            return 39_000_000
-        case .base, .baseEn:
-            return 141_000_000
-        case .small, .smallEn:
-            return 466_000_000
-        case .medium, .mediumEn:
-            return 1_553_000_000
+        case .tiny:
+            return 77_691_713
+        case .tinyEn:
+            return 77_704_715
+        case .base:
+            return 147_951_465
+        case .baseEn:
+            return 147_964_211
+        case .small:
+            return 487_601_967
+        case .smallEn:
+            return 487_614_201
+        case .medium:
+            return 1_533_763_059
+        case .mediumEn:
+            return 1_533_774_781
         case .largeV1, .largeV2:
-            return 2_884_000_000
+            return 3_094_623_691
         case .largeV3:
-            return 3_088_000_000
+            return 3_095_033_483
+        }
+    }
+
+    var checksum: String {
+        switch self {
+        case .tiny:
+            return "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"
+        case .tinyEn:
+            return "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
+        case .base:
+            return "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+        case .baseEn:
+            return "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
+        case .small:
+            return "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
+        case .smallEn:
+            return "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d"
+        case .medium:
+            return "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"
+        case .mediumEn:
+            return "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356"
+        case .largeV1:
+            return "7d99f41a10525d0206bddadd86760181fa920438b6b33237e3118ff6c83bb53d"
+        case .largeV2:
+            return "9a423fe4d40c82774b6af34115b8b935f34152246eb19e80e376071d3f999487"
+        case .largeV3:
+            return "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2"
         }
     }
 }
@@ -58,7 +93,6 @@ struct ModelOption {
     enum Kind {
         case known(KnownModel)
         case local
-        case custom
     }
 
     let kind: Kind
@@ -111,14 +145,6 @@ final class ModelSelectionStore {
     }
 
     func resolveModelURL(in bundle: WhisperBundle) throws -> URL {
-        if let customPath = settings.customModelPath {
-            let url = URL(fileURLWithPath: customPath)
-            guard fileManager.fileExists(atPath: url.path) else {
-                throw TranscriptionError.bundleMissing("Custom model not found at \(url.path).")
-            }
-            return url
-        }
-
         if let fileName = settings.selectedModelFilename {
             let url = bundle.modelsDirectory.appendingPathComponent(fileName)
             guard fileManager.fileExists(atPath: url.path) else {
@@ -131,22 +157,10 @@ final class ModelSelectionStore {
     }
 
     func applySelection(_ option: ModelOption) {
-        switch option.kind {
-        case .custom:
-            break
-        case .known, .local:
-            settings.customModelPath = nil
-            settings.selectedModelFilename = option.fileName
-        }
-    }
-
-    func useCustomModel(at path: String) {
-        settings.customModelPath = path
-        settings.selectedModelFilename = nil
+        settings.selectedModelFilename = option.fileName
     }
 
     func resetCustomModelIfNeeded(defaultModelName: String) {
-        settings.customModelPath = nil
         if settings.selectedModelFilename == nil {
             settings.selectedModelFilename = defaultModelName
         }
@@ -180,23 +194,11 @@ final class ModelSelectionStore {
             }
         }
 
-        if settings.customModelPath != nil {
-            options.insert(ModelOption(kind: .custom, displayName: "Custom model", fileName: nil, available: true), at: 0)
-        }
-
         return options
     }
 
     private func determineSelectionIndex(options: [ModelOption], bundle: WhisperBundle) -> Int? {
         guard !options.isEmpty else { return nil }
-
-        if settings.customModelPath != nil,
-           let idx = options.firstIndex(where: {
-               if case .custom = $0.kind { return true }
-               return false
-           }) {
-            return idx
-        }
 
         if let fileName = settings.selectedModelFilename,
            let idx = options.firstIndex(where: { $0.fileName == fileName }) {
@@ -222,10 +224,6 @@ final class ModelSelectionStore {
     }
 
     private func pathDescription(bundle: WhisperBundle) -> String {
-        if let customPath = settings.customModelPath {
-            return "Custom model: \(customPath)"
-        }
-
         if let fileName = settings.selectedModelFilename {
             let path = bundle.modelsDirectory.appendingPathComponent(fileName).path
             return "Bundle path: \(path)"
