@@ -27,6 +27,7 @@ public enum TranscriptionError: LocalizedError {
 public final class MicRecorder: NSObject, @unchecked Sendable {
     private var activeRecorder: AVAudioRecorder?
     private var meterTimer: DispatchSourceTimer?
+    private var completionSemaphore: DispatchSemaphore?
     public var levelUpdateHandler: ((Float) -> Void)?
 
     public override init() {}
@@ -63,15 +64,20 @@ public final class MicRecorder: NSObject, @unchecked Sendable {
         activeRecorder?.stop()
         activeRecorder = nil
         stopMetering()
+        completionSemaphore?.signal()
     }
 
     public func record(into url: URL, duration: TimeInterval) throws {
+        let semaphore = DispatchSemaphore(value: 0)
+        completionSemaphore = semaphore
         try beginRecording(into: url)
-        let target = Date().addingTimeInterval(duration)
-        while isRecording, Date() < target {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + duration) { [weak self] in
+            self?.stopRecording()
         }
-        stopRecording()
+
+        semaphore.wait()
+        completionSemaphore = nil
     }
 
     deinit {
