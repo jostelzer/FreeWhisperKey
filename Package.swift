@@ -28,6 +28,10 @@ let package = Package(
         .testTarget(
             name: "TranscriptionCoreTests",
             dependencies: ["TranscriptionCore"]
+        ),
+        .testTarget(
+            name: "TranscribeMenuAppTests",
+            dependencies: ["TranscribeMenuApp"]
         )
     ]
 )

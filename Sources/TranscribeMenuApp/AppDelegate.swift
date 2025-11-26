@@ -976,6 +976,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let modelURL = try modelSelectionStore.resolveModelURL(in: bundle)
+        if let warning = modelSelectionStore.drainValidationIssueMessage() {
+            presentAlert(message: "Model Selection Reset", informativeText: warning)
+        }
         return WhisperBridge(executableURL: bundle.binary, modelURL: modelURL)
     }
 

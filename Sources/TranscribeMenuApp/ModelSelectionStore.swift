@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import TranscriptionCore
 
 enum KnownModel: String, CaseIterable {
@@ -128,6 +129,8 @@ struct ModelSelectionSnapshot {
 final class ModelSelectionStore {
     private let settings: AppSettings
     private let fileManager: FileManager
+    private let logger = Logger(subsystem: "com.freewhisperkey.app", category: "ModelSelection")
+    private var pendingValidationIssue: String?
 
     init(settings: AppSettings, fileManager: FileManager = .default) {
         self.settings = settings
@@ -145,15 +148,23 @@ final class ModelSelectionStore {
     }
 
     func resolveModelURL(in bundle: WhisperBundle) throws -> URL {
-        if let fileName = settings.selectedModelFilename {
-            let url = bundle.modelsDirectory.appendingPathComponent(fileName)
-            guard fileManager.fileExists(atPath: url.path) else {
-                throw TranscriptionError.bundleMissing("Model not found at \(url.path).")
-            }
-            return url
+        pendingValidationIssue = nil
+
+        guard let fileName = settings.selectedModelFilename else {
+            return bundle.defaultModel
         }
 
-        return bundle.defaultModel
+        let validator = ModelSelectionValidator(bundle: bundle, fileManager: fileManager)
+        switch validator.validate(fileName: fileName) {
+        case let .valid(url):
+            return url
+        case let .invalid(reason):
+            let message = "Stored model \"\(fileName)\" was rejected: \(reason). Falling back to \(bundle.defaultModel.lastPathComponent)."
+            pendingValidationIssue = message
+            settings.selectedModelFilename = nil
+            logger.warning("\(message, privacy: .public)")
+            return bundle.defaultModel
+        }
     }
 
     func applySelection(_ option: ModelOption) {
@@ -164,6 +175,11 @@ final class ModelSelectionStore {
         if settings.selectedModelFilename == nil {
             settings.selectedModelFilename = defaultModelName
         }
+    }
+
+    func drainValidationIssueMessage() -> String? {
+        defer { pendingValidationIssue = nil }
+        return pendingValidationIssue
     }
 
     // MARK: - Helpers
@@ -229,5 +245,53 @@ final class ModelSelectionStore {
         }
 
         return "Selected model: \(bundle.defaultModel.lastPathComponent)"
+    }
+}
+
+private struct ModelSelectionValidator {
+    enum Result {
+        case valid(URL)
+        case invalid(String)
+    }
+
+    let bundle: WhisperBundle
+    let fileManager: FileManager
+
+    func validate(fileName: String) -> Result {
+        guard !fileName.isEmpty else {
+            return .invalid("stored value was empty")
+        }
+
+        if fileName.contains("/") || fileName.contains("\\") {
+            return .invalid("path separators are not allowed in model names")
+        }
+
+        let candidate = bundle.modelsDirectory.appendingPathComponent(fileName)
+        guard candidate.isDescendant(of: bundle.modelsDirectory) else {
+            return .invalid("path attempted to escape the models directory")
+        }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory) else {
+            return .invalid("file does not exist at \(candidate.path)")
+        }
+
+        guard !isDirectory.boolValue else {
+            return .invalid("selection points to a directory, not a model file")
+        }
+
+        return .valid(candidate)
+    }
+}
+
+private extension URL {
+    func isDescendant(of parent: URL) -> Bool {
+        let resolvedParent = parent.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedSelf = self.resolvingSymlinksInPath().standardizedFileURL
+        var parentPath = resolvedParent.path
+        if !parentPath.hasSuffix("/") {
+            parentPath.append("/")
+        }
+        return resolvedSelf.path.hasPrefix(parentPath)
     }
 }
