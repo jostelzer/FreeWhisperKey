@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon_256.png" alt="FreeWhisperKey icon" width="160" />
+</p>
+
 # FreeWhisperKey
 
 ## What is it?
@@ -8,7 +12,7 @@
 ✅ Super‑minimal UI — no bloat, no annoying sounds or popups  
 ✅ Forever free  
 
-FreeWhisperKey lets you dictate anywhere on your Mac by simply holding your `Fn` key. While it’s held, your speech is transcribed to text; when you release it, dictation stops. No extra windows, no distractions.
+FreeWhisperKey lets you dictate anywhere on your Mac by simply holding your `Fn` key. While it’s held, your speech is transcribed to text; when you release it, dictation stops. You can choose which Whisper model to use, balancing speed and accuracy. No extra windows, no distractions.
 
 ## Installation
 
@@ -38,6 +42,15 @@ When you first run FreeWhisperKey, macOS will ask for a few permissions. Here’
 
 FreeWhisperKey never sends your audio or text to any server. Everything stays on your machine.
 
+## Choosing a Whisper model
+
+FreeWhisperKey lets you pick the Whisper model that best fits your needs:
+
+- Smaller models → faster, use less CPU, slightly less accurate.  
+- Larger models → slower, more accurate, higher resource usage.
+
+Select your preferred model in the app’s settings/preferences to tune the trade‑off between speed and accuracy on your Mac.
+
 ## Contributing
 
 Contributions, bug reports, and ideas are very welcome.
@@ -50,4 +63,3 @@ Contributions, bug reports, and ideas are very welcome.
 ## License
 
 FreeWhisperKey is open source, released under the BSD 3‑Clause license. See `LICENSE` for details.
-
