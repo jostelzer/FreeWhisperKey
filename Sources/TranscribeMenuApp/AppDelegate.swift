@@ -1017,29 +1017,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusIconView.state = .processing
         pendingStopAfterStart = false
 
-        workQueue.async { [weak self] in
-            guard let strongSelf = self else { return }
-            do {
-                try strongSelf.recorder.beginRecording(into: recording.url)
-                DispatchQueue.main.async {
-                    guard case .starting(let activeRecording) = strongSelf.state else {
+        recorder.beginRecording(into: recording.url) { [weak self] result in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success:
+                    guard case .starting(let activeRecording) = self.state else {
                         return
                     }
-                    strongSelf.state = .recording(activeRecording)
-                    strongSelf.statusIconView.state = .recording
-                    if strongSelf.pendingStopAfterStart {
-                        strongSelf.pendingStopAfterStart = false
-                        strongSelf.finishPressToTalk()
+                    self.state = .recording(activeRecording)
+                    self.statusIconView.state = .recording
+                    if self.pendingStopAfterStart {
+                        self.pendingStopAfterStart = false
+                        self.finishPressToTalk()
                     }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    guard let holder = self else { return }
-                    holder.pendingStopAfterStart = false
-                    holder.cleanupRecording(recording, context: "failed to start recording")
-                    holder.state = .idle
-                    holder.statusIconView.state = .idle
-                    holder.presentAlert(message: "Recording Error", informativeText: error.localizedDescription)
+                case .failure(let error):
+                    self.pendingStopAfterStart = false
+                    self.cleanupRecording(recording, context: "failed to start recording")
+                    self.state = .idle
+                    self.statusIconView.state = .idle
+                    self.presentAlert(message: "Recording Error", informativeText: error.localizedDescription)
                 }
             }
         }

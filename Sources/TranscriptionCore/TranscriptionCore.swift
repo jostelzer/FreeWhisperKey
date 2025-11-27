@@ -44,20 +44,40 @@ public final class MicRecorder: NSObject, @unchecked Sendable {
             throw TranscriptionError.microphonePermissionDenied
         }
 
-        let recorder = try AVAudioRecorder(url: url, settings: Self.settings)
-        recorder.prepareToRecord()
-        recorder.isMeteringEnabled = true
-        guard recorder.record() else {
-            throw TranscriptionError.recorderFailed("Unable to start recording.")
-        }
-        do {
-            try SecureFileEraser.enforceUserOnlyPermissions(for: url)
-        } catch {
-            recorder.stop()
-            throw TranscriptionError.recorderFailed("Failed to harden recording file: \(error.localizedDescription)")
-        }
+        let recorder = try configureRecorder(at: url)
         activeRecorder = recorder
         startMetering()
+    }
+
+    public func beginRecording(into url: URL, completion: @escaping @Sendable (Result<Void, Error>) -> Void) {
+        guard !isRecording else {
+            completion(.failure(TranscriptionError.recorderFailed("Recorder already in use.")))
+            return
+        }
+        Self.requestPermissionAsync { [weak self] granted in
+            guard let self else {
+                completion(.failure(TranscriptionError.recorderFailed("Recorder unavailable.")))
+                return
+            }
+            guard granted else {
+                completion(.failure(TranscriptionError.microphonePermissionDenied))
+                return
+            }
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let recorder = try self.configureRecorder(at: url)
+                    DispatchQueue.main.async {
+                        self.activeRecorder = recorder
+                        self.startMetering()
+                        completion(.success(()))
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        }
     }
 
     public func stopRecording() {
@@ -147,6 +167,30 @@ public final class MicRecorder: NSObject, @unchecked Sendable {
         }
     }
 
+    private static func requestPermissionAsync(_ completion: @escaping @Sendable (Bool) -> Void) {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .authorized:
+            DispatchQueue.main.async {
+                completion(true)
+            }
+        case .denied, .restricted:
+            DispatchQueue.main.async {
+                completion(false)
+            }
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { allow in
+                DispatchQueue.main.async {
+                    completion(allow)
+                }
+            }
+        @unknown default:
+            DispatchQueue.main.async {
+                completion(false)
+            }
+        }
+    }
+
     private static var settings: [String: Any] {
         [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
@@ -156,6 +200,28 @@ public final class MicRecorder: NSObject, @unchecked Sendable {
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsFloatKey: false
         ]
+    }
+
+    private func configureRecorder(at url: URL) throws -> AVAudioRecorder {
+        do {
+            let recorder = try AVAudioRecorder(url: url, settings: Self.settings)
+            recorder.prepareToRecord()
+            recorder.isMeteringEnabled = true
+            guard recorder.record() else {
+                throw TranscriptionError.recorderFailed("Unable to start recording.")
+            }
+            do {
+                try SecureFileEraser.enforceUserOnlyPermissions(for: url)
+            } catch {
+                recorder.stop()
+                throw TranscriptionError.recorderFailed("Failed to harden recording file: \(error.localizedDescription)")
+            }
+            return recorder
+        } catch let error as TranscriptionError {
+            throw error
+        } catch {
+            throw TranscriptionError.recorderFailed(error.localizedDescription)
+        }
     }
 }
 
