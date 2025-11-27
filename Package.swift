@@ -31,7 +31,7 @@ let package = Package(
         ),
         .testTarget(
             name: "TranscribeMenuAppTests",
-            dependencies: ["TranscribeMenuApp"]
+            dependencies: ["TranscribeMenuApp", "TranscriptionCore"]
         )
     ]
 )

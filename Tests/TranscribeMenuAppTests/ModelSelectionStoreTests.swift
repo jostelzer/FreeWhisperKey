@@ -1,5 +1,6 @@
 import XCTest
 @testable import TranscribeMenuApp
+@testable import TranscriptionCore
 
 final class ModelSelectionStoreTests: XCTestCase {
     private var tempRoot: URL!
@@ -77,7 +78,7 @@ final class ModelSelectionStoreTests: XCTestCase {
 
         let warning = store.drainValidationIssueMessage()
         XCTAssertNotNil(warning)
-        XCTAssertTrue(warning?.contains("escape the models directory") ?? false)
+        XCTAssertTrue(warning?.contains("path separators") ?? false)
     }
 
     func testValidSelectionUsesCustomModel() throws {
