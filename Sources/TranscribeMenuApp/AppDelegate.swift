@@ -585,6 +585,28 @@ final class FnHotkeyMonitor {
     }
 }
 
+enum StartupCaptureResolution: Equatable {
+    case beginRecording
+    case cancelCapture
+}
+
+struct StartupCaptureCoordinator {
+    private(set) var releasedBeforeRecorderStart = false
+
+    mutating func markReleaseBeforeRecorderStart() {
+        releasedBeforeRecorderStart = true
+    }
+
+    mutating func resolveOnRecorderStart() -> StartupCaptureResolution {
+        defer { releasedBeforeRecorderStart = false }
+        return releasedBeforeRecorderStart ? .cancelCapture : .beginRecording
+    }
+
+    mutating func reset() {
+        releasedBeforeRecorderStart = false
+    }
+}
+
 
 final class StatusIconView: NSView {
     enum State {
@@ -946,7 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferencesWindowController: PreferencesWindowController?
     private var hasShownModelInstallWarning = false
     private var state: CaptureState = .idle
-    private var pendingStopAfterStart = false
+    private var startupCaptureCoordinator = StartupCaptureCoordinator()
     private var copyLastTranscriptItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1123,7 +1145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         state = .starting(recording)
         statusIconView.state = .processing
-        pendingStopAfterStart = false
+        startupCaptureCoordinator.reset()
 
         recorder.beginRecording(into: recording.url) { [weak self] result in
             Task { @MainActor [weak self] in
@@ -1133,14 +1155,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard case .starting(let activeRecording) = self.state else {
                         return
                     }
-                    self.state = .recording(activeRecording)
-                    self.statusIconView.state = .recording
-                    if self.pendingStopAfterStart {
-                        self.pendingStopAfterStart = false
-                        self.finishPressToTalk()
+                    switch self.startupCaptureCoordinator.resolveOnRecorderStart() {
+                    case .beginRecording:
+                        self.state = .recording(activeRecording)
+                        self.statusIconView.state = .recording
+                    case .cancelCapture:
+                        self.recorder.stopRecording()
+                        self.cleanupRecording(activeRecording, context: "released before recording started")
+                        self.resetState()
                     }
                 case .failure(let error):
-                    self.pendingStopAfterStart = false
+                    self.startupCaptureCoordinator.reset()
                     self.cleanupRecording(recording, context: "failed to start recording")
                     self.state = .idle
                     self.statusIconView.state = .idle
@@ -1153,10 +1178,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishPressToTalk() {
         switch state {
         case .starting:
-            pendingStopAfterStart = true
+            startupCaptureCoordinator.markReleaseBeforeRecorderStart()
             return
         case .recording(let recording):
-            pendingStopAfterStart = false
+            startupCaptureCoordinator.reset()
             recorder.stopRecording()
             state = .processing
             statusIconView.state = .processing
@@ -1250,7 +1275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func resetState() {
         state = .idle
-        pendingStopAfterStart = false
+        startupCaptureCoordinator.reset()
         statusIconView.state = .idle
     }
 

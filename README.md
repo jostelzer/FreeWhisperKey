@@ -18,7 +18,7 @@ FreeWhisperKey lets you dictate anywhere on your Mac by simply holding your `Fn`
 
 1. Download the latest `.dmg`:
 
-   https://github.com/jostelzer/FreeWhisperKey/releases/download/v0.1.1/FreeWhisperKey-0.1.1.dmg
+   https://github.com/jostelzer/FreeWhisperKey/releases/download/v0.1.2/FreeWhisperKey-0.1.2.dmg
 
 2. Open the downloaded file and drag `FreeWhisperKey.app` into your `Applications` folder.
 3. Launch `FreeWhisperKey.app`.
@@ -59,6 +59,23 @@ Contributions, bug reports, and ideas are very welcome.
 - For pull requests, keep changes focused and small:
   - Explain the motivation and behavior change in the PR description.
   - If possible, include steps to test your change.
+
+### Building the whisper.cpp bundle
+
+FreeWhisperKey embeds the `whisper-cli` binary from [whisper.cpp](https://github.com/ggerganov/whisper.cpp).  
+When rebuilding it for redistribution, make sure it targets macOS 13 so the bundle runs on Ventura and newer:
+
+```bash
+cd whisper.cpp
+MACOSX_DEPLOYMENT_TARGET=13.0 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+MACOSX_DEPLOYMENT_TARGET=13.0 cmake --build build --target whisper-cli
+cd ..
+scripts/package_whisper_bundle.sh        # add --include-model to bundle ggml-base.bin
+```
+
+The packaging script now copies all dependent `.dylib`s into `dist/whisper-bundle/lib`, rewrites their
+`rpath`s to use relative locations, and records their hashes in `manifest.json` so end users never see
+missing-library errors.
 
 ## License
 

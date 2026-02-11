@@ -41,6 +41,7 @@ public final class TranscriptDelivery: @unchecked Sendable {
     public func processTranscript(_ text: String, configuration: TranscriptDeliveryConfiguration) -> TranscriptDeliveryResult? {
         let normalized = normalize(text, configuration: configuration)
         let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
         guard trimmed != "[BLANK_AUDIO]" else { return nil }
         lastTranscript = normalized
 

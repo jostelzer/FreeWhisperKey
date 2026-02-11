@@ -7,7 +7,7 @@ set -euo pipefail
 # Usage:
 #   scripts/package_app.sh [version]
 # Example:
-#   scripts/package_app.sh 0.1.0
+#   scripts/package_app.sh 0.1.2
 #
 # The resulting artifacts are written to:
 #   dist/FreeWhisperKey.app
@@ -18,7 +18,7 @@ cd "${ROOT_DIR}"
 
 APP_NAME="FreeWhisperKey"
 PRODUCT_NAME="FreeWhisperKey"
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.1.2}"
 
 BUILD_DIR="${ROOT_DIR}/.build/release"
 BIN_PATH="${BUILD_DIR}/${PRODUCT_NAME}"
