@@ -10,6 +10,7 @@ Icon?
 # Editor / tooling noise
 .idea/
 .vscode/
+.agent/
 *.swp
 *.swo
 *~
